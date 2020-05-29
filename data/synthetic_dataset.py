@@ -52,3 +52,14 @@ class CustomDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         return (self.X_input[idx, :, np.newaxis], self.X_target[idx, :, np.newaxis])
 
+class CustomDataset2d(torch.utils.data.Dataset):
+    def __init__(self, X_input, X_target):
+        self.X_input = X_input
+        self.X_target = X_target
+
+    def __len__(self):
+        return (self.X_input).shape[0]
+
+    def __getitem__(self, idx):
+        # return (self.X_input[idx, :, np.newaxis], self.X_target[idx, :, np.newaxis])
+        return (self.X_input[idx, :, :], self.X_target[idx, :, np.newaxis])
