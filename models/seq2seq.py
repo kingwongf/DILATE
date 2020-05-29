@@ -111,5 +111,9 @@ class MV_LSTM(torch.nn.Module):
         # for following linear layer we want to keep batch_size dimension and merge rest
         # .contiguous() -> solves tensor compatibility error
 
+        print(f"lstm out shape: {lstm_out.shape}")
         x= lstm_out[:,-1,:]
+        print(f"x shape : {x.shape}")
+        print(f"linear x shape: {self.l_linear(x).shape}")
+        print(f"linear x unsequeeze shape: {self.l_linear(x).unsqueeze(-1).shape}")
         return self.l_linear(x).unsqueeze(-1)

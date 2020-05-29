@@ -43,14 +43,14 @@ def train_test_roll_win(df, target_col, N_input, N_output, r, no_of_train):
     '''
     # arr = np.array([ndarr[i:i+window] for i in range(ndarr.shape[0]-window+1)])
     ndarr = df.dropna(axis=0).values
-    print(((1+r)* (N_input + N_output) * no_of_train))
+    # print(((1+r)* (N_input + N_output) * no_of_train))
     total_no_batches = np.round(ndarr.shape[0]//((1+r)* (N_input + N_output) * no_of_train))
 
     resize_ndarr = ndarr[len(ndarr) - int(total_no_batches * (1+r) * (N_input + N_output) * no_of_train):]
     print(f"total_no_batches: {total_no_batches}, ndarr: {ndarr.shape}, ndarr_resized: {resize_ndarr.shape}")
     print(f"N_input: {N_input}, N_output: {N_output}, r: {r}, no_of_train: {no_of_train}")
-    print(total_no_batches * (1 + r) * (N_input + N_output) * no_of_train)
-    print(int(total_no_batches * (1 + r) * (N_input + N_output) * no_of_train))
+    # print(total_no_batches * (1 + r) * (N_input + N_output) * no_of_train)
+    # print(int(total_no_batches * (1 + r) * (N_input + N_output) * no_of_train))
     assert len(resize_ndarr) == int(total_no_batches * (1 + r) * (N_input + N_output) * no_of_train)
     assert len(resize_ndarr) % total_no_batches == 0
 
@@ -61,18 +61,18 @@ def train_test_roll_win(df, target_col, N_input, N_output, r, no_of_train):
     # arr = ndarr[ndarr.shape[0]-total_no_batches*2*(N_input+ N_output):]
     arr = resize_ndarr.reshape(int(total_no_batches), int(np.round((N_input+ N_output)* (1 + r) * no_of_train)),n_feat)
 
-    print(f"batch reshaped arr: {arr.shape}")
+    # print(f"batch reshaped arr: {arr.shape}")
 
 
 
     train_test_split = int((arr.shape[1] * 0.6))
-    print(train_test_split)
-    print(arr.shape)
+    # print(train_test_split)
+    # print(arr.shape)
     train, test = arr[:, :train_test_split, :], arr[:, train_test_split:, :]
 
-    print(f"train: {train.shape}")
+    # print(f"train: {train.shape}")
     # print(train)
-    print(f"test: {test.shape}")
+    # print(f"test: {test.shape}")
     # print(test)
 
 
@@ -80,16 +80,16 @@ def train_test_roll_win(df, target_col, N_input, N_output, r, no_of_train):
     window = N_input + N_output
     train = np.array([train[i, j:j+window] for i in range(train.shape[0]) for j in range(train.shape[1]-window+1)])
     test = np.array([test[i, j:j+window] for i in range(test.shape[0]) for j in range(test.shape[1]-window+1)])
-    print(f"rolling train shape: {train.shape}")
-    print(f"rolling test shape: {test.shape}")
+    # print(f"rolling train shape: {train.shape}")
+    # print(f"rolling test shape: {test.shape}")
     # print(train)
 
     train_input, train_target = train[:, :N_input, :], train[:, -N_output:, idx_tgt_col]
-    print(f"train input, output shape: {train_input.shape, train_target.shape}")
+     #print(f"train input, output shape: {train_input.shape, train_target.shape}")
     # print(train_input, train_target)
 
     test_input, test_target = test[:, :N_input, :], test[:, -N_output:, idx_tgt_col]
-    print(f"test input, output shape: {test_input.shape, test_target.shape}")
+    # print(f"test input, output shape: {test_input.shape, test_target.shape}")
 
     return train_input, train_target, test_input, test_target, int(total_no_batches)
 
@@ -101,9 +101,13 @@ df = pd.read_excel("data/data.xlsx", usecols=["US Equity", "US Bond", "UK Equity
 log_df = np.log(df)
 train_input, train_target, test_input, test_target, total_no_batches = \
     train_test_roll_win(log_df, "US Equity", N_input=20, N_output=5,r=1/3, no_of_train=6)
+## TODO change back after fixing pred
+## TODO output size from preds: (1, 1) to match target: (5, 1)
+
+# batch_size = int(total_no_batches/13)
+batch_size = int(total_no_batches)
 
 
-batch_size = int(total_no_batches/13)
 dataset_train = CustomDataset2d(train_input, train_target)
 dataset_test = CustomDataset2d(test_input, test_target)
 
@@ -138,8 +142,6 @@ def train_model(net, batch_size,loss_type, learning_rate, epochs=1000, gamma = 0
             net.init_hidden(batch_size)
 
             # forward + backward + optimize
-            print(inputs.shape)
-            print(target.shape)
 
             outputs = net(inputs)
             loss_mse,loss_shape,loss_temporal = torch.tensor(0),torch.tensor(0),torch.tensor(0)
@@ -149,8 +151,6 @@ def train_model(net, batch_size,loss_type, learning_rate, epochs=1000, gamma = 0
                 loss = loss_mse                   
  
             if (loss_type=='dilate'):
-                print(inputs.shape)
-                print(target.shape)
                 loss, loss_shape, loss_temporal = dilate_loss(target,outputs,alpha, gamma, device)
                   
             optimizer.zero_grad()
@@ -254,6 +254,7 @@ for ind in range(1,51):
         target = test_targets.detach().cpu().numpy()[ind,:,:]
         preds = pred.detach().cpu().numpy()[ind,:,:]
 
+        print(f"input: {input.shape}, target: {target.shape}, preds: {preds.shape}")
         plt.subplot(1,2,k)
         plt.plot(range(0,N_input) ,input,label='input',linewidth=3)
         plt.plot(range(N_input-1,N_input+N_output), np.concatenate([ input[N_input-1:N_input], target ]) ,label='target',linewidth=3)   
