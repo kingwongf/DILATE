@@ -18,8 +18,8 @@ random.seed(0)
 batch_size = 49 ## TODO NEED TO CHNAGE FROM 100 TO 1 FOR CUSTOM TIME SERIES, BATCH SIZE ITERATE FROM N= 500
 N = 98
 ## 40 time steps in each N time series
-N_input = 39 ## first 20 time steps as input
-N_output = 1  ## last 20 time steps to predict
+N_input = 30 ## first 20 time steps as input
+N_output = 10  ## last 20 time steps to predict
 sigma = 0.01
 gamma = 0.01
 '''
@@ -133,8 +133,6 @@ def train_model(net,loss_type, learning_rate, epochs=1000, gamma = 0.001,
                 loss = loss_mse                   
  
             if (loss_type=='dilate'):
-                print(inputs.shape)
-                print(target.shape)
                 loss, loss_shape, loss_temporal = dilate_loss(target,outputs,alpha, gamma, device)
                   
             optimizer.zero_grad()
