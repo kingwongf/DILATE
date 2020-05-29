@@ -1,8 +1,8 @@
 import numpy as np
 import torch
 import pandas as pd
-from data.synthetic_dataset import create_synthetic_dataset, SyntheticDataset, CustomDataset
-from models.seq2seq import EncoderRNN, DecoderRNN, Net_GRU
+from data.synthetic_dataset import create_synthetic_dataset, SyntheticDataset, CustomDataset, CustomDataset2d
+from models.seq2seq import EncoderRNN, DecoderRNN, Net_GRU, MV_LSTM
 from loss.dilate_loss import dilate_loss
 from torch.utils.data import DataLoader
 import random
@@ -15,63 +15,104 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 random.seed(0)
 
 # parameters
-batch_size = 49 ## TODO NEED TO CHNAGE FROM 100 TO 1 FOR CUSTOM TIME SERIES, BATCH SIZE ITERATE FROM N= 500
+
 N = 98
 ## 40 time steps in each N time series
 N_input = 39 ## first 20 time steps as input
 N_output = 1  ## last 20 time steps to predict
 sigma = 0.01
 gamma = 0.01
+n_features = 3
+seq_length = N_input
 
 ## Load Custom time series
 
 ## limiting due to input and output step sizes and N size
 
 
-def custom_train_test(df, N_input, N_output, split=0.5):
-    arr = np.log(df.dropna(axis=0).values)
 
-    ## input and target step sizes for both train and test sets
-    # N_input = 30
-    # N_output = 10
+def train_test_roll_win(df, target_col, N_input, N_output, r, no_of_train):
+    '''
+    arr_length = total_no_batches * (1 + r) * (N_input + N_output) * no_of_train
+    r: no. of train set/no. of test set
+    no. of test = r * no. of train set, needs to be an intrger > 1
+
+    :param ndarr: dim = (time, n_features)
+    :param window:
+    :return:
+    '''
+    # arr = np.array([ndarr[i:i+window] for i in range(ndarr.shape[0]-window+1)])
+    ndarr = df.dropna(axis=0).values
+    print(((1+r)* (N_input + N_output) * no_of_train))
+    total_no_batches = np.round(ndarr.shape[0]//((1+r)* (N_input + N_output) * no_of_train))
+
+    resize_ndarr = ndarr[len(ndarr) - int(total_no_batches * (1+r) * (N_input + N_output) * no_of_train):]
+    print(f"total_no_batches: {total_no_batches}, ndarr: {ndarr.shape}, ndarr_resized: {resize_ndarr.shape}")
+    print(f"N_input: {N_input}, N_output: {N_output}, r: {r}, no_of_train: {no_of_train}")
+    print(total_no_batches * (1 + r) * (N_input + N_output) * no_of_train)
+    print(int(total_no_batches * (1 + r) * (N_input + N_output) * no_of_train))
+    assert len(resize_ndarr) == int(total_no_batches * (1 + r) * (N_input + N_output) * no_of_train)
+    assert len(resize_ndarr) % total_no_batches == 0
+
+    idx_tgt_col = df.columns.get_loc(target_col)
+
+
+    n_feat = resize_ndarr.shape[1]
+    # arr = ndarr[ndarr.shape[0]-total_no_batches*2*(N_input+ N_output):]
+    arr = resize_ndarr.reshape(int(total_no_batches), int(np.round((N_input+ N_output)* (1 + r) * no_of_train)),n_feat)
+
+    print(f"batch reshaped arr: {arr.shape}")
+
+
+
+    train_test_split = int((arr.shape[1] * 0.6))
+    print(train_test_split)
     print(arr.shape)
-    print(arr)
+    train, test = arr[:, :train_test_split, :], arr[:, train_test_split:, :]
 
-    N = len(arr) // (2 * (N_input + N_output))
+    print(f"train: {train.shape}")
+    # print(train)
+    print(f"test: {test.shape}")
+    # print(test)
 
-    arr = arr[:N * (2 * (N_input + N_output))]
 
-    arr_N = arr.reshape((N, 3, int(len(arr) // N)))
-    print(arr_N)
-    print(arr_N.shape)
+    ## rolling window for train and test set
+    window = N_input + N_output
+    train = np.array([train[i, j:j+window] for i in range(train.shape[0]) for j in range(train.shape[1]-window+1)])
+    test = np.array([test[i, j:j+window] for i in range(test.shape[0]) for j in range(test.shape[1]-window+1)])
+    print(f"rolling train shape: {train.shape}")
+    print(f"rolling test shape: {test.shape}")
+    # print(train)
 
-    train, test = arr_N[:,:, :int(split * arr_N.shape[-1])], arr_N[:,:, int(split * arr_N.shape[-1]):]
-    print(train.shape)
-    print(test.shape)
+    train_input, train_target = train[:, :N_input, :], train[:, -N_output:, idx_tgt_col]
+    print(f"train input, output shape: {train_input.shape, train_target.shape}")
+    # print(train_input, train_target)
 
-    train_input, train_target = train[:,:, :N_input], train[:,:, N_input:]
-    test_input, test_target = test[:,:, :N_input], test[:,:, N_input:]
+    test_input, test_target = test[:, :N_input, :], test[:, -N_output:, idx_tgt_col]
+    print(f"test input, output shape: {test_input.shape, test_target.shape}")
 
-    return train_input, train_target, test_input, test_target, N
+    return train_input, train_target, test_input, test_target, int(total_no_batches)
+
+
 
 ## US Equity
 df = pd.read_excel("data/data.xlsx", usecols=["US Equity", "US Bond", "UK Equity"])
-train_input, train_target, test_input, test_target, N = custom_train_test(df, N_input=N_input,
-                                                                       N_output=N_output, split=0.5)
-print(N)
 
-print(train_input.shape, train_target.shape, test_input.shape, test_target.shape)
+log_df = np.log(df)
+train_input, train_target, test_input, test_target, total_no_batches = \
+    train_test_roll_win(log_df, "US Equity", N_input=20, N_output=5,r=1/3, no_of_train=6)
 
 
-dataset_train = CustomDataset(train_input, train_target)
-dataset_test = CustomDataset(test_input, test_target)
+batch_size = int(total_no_batches/13)
+dataset_train = CustomDataset2d(train_input, train_target)
+dataset_test = CustomDataset2d(test_input, test_target)
 
 trainloader = DataLoader(dataset_train, batch_size=batch_size,shuffle=True, num_workers=1)
 testloader  = DataLoader(dataset_test, batch_size=batch_size,shuffle=False, num_workers=1)
 
 
 
-def train_model(net,loss_type, learning_rate, epochs=1000, gamma = 0.001,
+def train_model(net, batch_size,loss_type, learning_rate, epochs=1000, gamma = 0.001,
                 print_every=50,eval_every=50, verbose=1, Lambda=1, alpha=0.5):
     
     optimizer = torch.optim.Adam(net.parameters(),lr=learning_rate)
@@ -92,7 +133,9 @@ def train_model(net,loss_type, learning_rate, epochs=1000, gamma = 0.001,
 
             inputs = torch.tensor(inputs, dtype=torch.float32).to(device)
             target = torch.tensor(target, dtype=torch.float32).to(device)
-            batch_size, N_output = target.shape[0:2]                     
+            # batch_size, N_output = target.shape[0:2]
+
+            net.init_hidden(batch_size)
 
             # forward + backward + optimize
             print(inputs.shape)
@@ -173,18 +216,20 @@ def eval_model(net,loader, gamma,verbose=1):
 
 
 # encoder = EncoderRNN(input_size=1, hidden_size=128, num_grulstm_layers=1, batch_size=batch_size).to(device)
-encoder = EncoderRNN(input_size=3, hidden_size=128, num_grulstm_layers=1, batch_size=batch_size).to(device)
 # decoder = DecoderRNN(input_size=1, hidden_size=128, num_grulstm_layers=1,fc_units=16, output_size=1).to(device)
-decoder = DecoderRNN(input_size=3, hidden_size=128, num_grulstm_layers=1,fc_units=16, output_size=3).to(device)
+# net_gru_dilate = Net_GRU(encoder,decoder, N_output, device).to(device)
 
-net_gru_dilate = Net_GRU(encoder,decoder, N_output, device).to(device)
-train_model(net_gru_dilate,loss_type='dilate',learning_rate=0.001, epochs=500, gamma=gamma, print_every=50, eval_every=50,verbose=1)
+net_gru_dilate = MV_LSTM(n_features,seq_length).to(device)
+train_model(net_gru_dilate, batch_size =batch_size,loss_type='dilate',
+            learning_rate=0.001, epochs=500, gamma=gamma, print_every=50, eval_every=50,verbose=1)
 
-encoder = EncoderRNN(input_size=1, hidden_size=128, num_grulstm_layers=1, batch_size=batch_size).to(device)
-decoder = DecoderRNN(input_size=1, hidden_size=128, num_grulstm_layers=1,fc_units=16, output_size=1).to(device)
-net_gru_mse = Net_GRU(encoder,decoder, N_output, device).to(device)
+# encoder = EncoderRNN(input_size=1, hidden_size=128, num_grulstm_layers=1, batch_size=batch_size).to(device)
+# decoder = DecoderRNN(input_size=1, hidden_size=128, num_grulstm_layers=1,fc_units=16, output_size=1).to(device)
+# net_gru_mse = Net_GRU(encoder,decoder, N_output, device).to(device)
+net_gru_mse = MV_LSTM(n_features,seq_length).to(device)
 
-train_model(net_gru_mse,loss_type='mse',learning_rate=0.001, epochs=500, gamma=gamma, print_every=50, eval_every=50,verbose=1)
+train_model(net_gru_mse, batch_size=batch_size,loss_type='mse',
+            learning_rate=0.001, epochs=500, gamma=gamma, print_every=50, eval_every=50,verbose=1)
 
 # Visualize results
 gen_test = iter(testloader)
