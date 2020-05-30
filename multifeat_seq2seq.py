@@ -38,16 +38,24 @@ class Decoder(nn.Module):
         # Create initial start value/token
         input = torch.tensor([[0.0]] * batch_size, dtype=torch.float)
         # Convert (batch_size, output_size) to (seq_len, batch_size, output_size)
+        print(f"init input shape before unsequeeze: {input.shape}")
         input = input.unsqueeze(0)
+
+        print(f"init input shape: {input.shape}")
 
         loss = 0
         for i in range(num_steps):
             # Push current input through LSTM: (seq_len=1, batch_size, input_size=1)
+            print(f"decoder forward input size: {input.size()}")
+            print(f"hiddem 0 shape: {hidden[0].size()}")
+            print(f"hiddem 1 shape: {hidden[1].size()}")
             output, hidden = self.lstm(input, hidden)
             # Push the output of last step through linear layer; returns (batch_size, 1)
             output = self.out(output[-1])
+            print(f"after pushing decoder output[-1] to linear layer: {output.shape}")
             # Generate input for next step by adding seq_len dimension (see above)
             input = output.unsqueeze(0)
+            print(f"new input size: {input.size()}")
             # Compute loss between predicted value and true value
             loss += criterion(output, outputs[:, i])
         return loss
@@ -107,8 +115,12 @@ if __name__ == '__main__':
     decoder_optimizer.zero_grad()
     # Reset hidden state of encoder for current batch
     encoder.hidden = encoder.init_hidden(inputs.shape[1])
+
+    print(f"init hidden 0 shape: {encoder.hidden[0].size()}")
+    print(f"init hidden 1 shape: {encoder.hidden[1].size()}")
     # Do forward pass through encoder
     hidden = encoder(inputs)
+    print(f"hidden 0 size : {hidden[0].size()}")
     # Do forward pass through decoder (decoder gets hidden state from encoder)
     loss = decoder(outputs, hidden, criterion)
     # Backpropagation
