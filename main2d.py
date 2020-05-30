@@ -18,13 +18,13 @@ random.seed(0)
 
 N = 98
 ## 40 time steps in each N time series
-N_input = 39 ## first 20 time steps as input
-N_output = 1  ## last 20 time steps to predict
+N_input = 20 ## first 20 time steps as input
+N_output = 5  ## last 20 time steps to predict
 sigma = 0.01
 gamma = 0.01
 n_features = 3
 seq_length = N_input
-
+target_col="US Equity"
 ## Load Custom time series
 
 ## limiting due to input and output step sizes and N size
@@ -100,7 +100,10 @@ df = pd.read_excel("data/data.xlsx", usecols=["US Equity", "US Bond", "UK Equity
 
 log_df = np.log(df)
 train_input, train_target, test_input, test_target, total_no_batches = \
-    train_test_roll_win(log_df, "US Equity", N_input=20, N_output=5,r=1/3, no_of_train=6)
+    train_test_roll_win(log_df, target_col=target_col, N_input=N_input, N_output=N_output,r=1/3, no_of_train=6)
+
+idx_tgt_col = df.columns.get_loc(target_col)
+
 ## TODO change back after fixing pred
 ## TODO output size from preds: (1, 1) to match target: (5, 1)
 
@@ -219,14 +222,14 @@ def eval_model(net,loader, gamma,verbose=1):
 # decoder = DecoderRNN(input_size=1, hidden_size=128, num_grulstm_layers=1,fc_units=16, output_size=1).to(device)
 # net_gru_dilate = Net_GRU(encoder,decoder, N_output, device).to(device)
 
-net_gru_dilate = MV_LSTM(n_features,seq_length).to(device)
+net_gru_dilate = MV_LSTM(n_features,seq_length, N_output).to(device)
 train_model(net_gru_dilate, batch_size =batch_size,loss_type='dilate',
             learning_rate=0.001, epochs=500, gamma=gamma, print_every=50, eval_every=50,verbose=1)
 
 # encoder = EncoderRNN(input_size=1, hidden_size=128, num_grulstm_layers=1, batch_size=batch_size).to(device)
 # decoder = DecoderRNN(input_size=1, hidden_size=128, num_grulstm_layers=1,fc_units=16, output_size=1).to(device)
 # net_gru_mse = Net_GRU(encoder,decoder, N_output, device).to(device)
-net_gru_mse = MV_LSTM(n_features,seq_length).to(device)
+net_gru_mse = MV_LSTM(n_features,seq_length, N_output).to(device)
 
 train_model(net_gru_mse, batch_size=batch_size,loss_type='mse',
             learning_rate=0.001, epochs=500, gamma=gamma, print_every=50, eval_every=50,verbose=1)
@@ -256,9 +259,9 @@ for ind in range(1,51):
 
         print(f"input: {input.shape}, target: {target.shape}, preds: {preds.shape}")
         plt.subplot(1,2,k)
-        plt.plot(range(0,N_input) ,input,label='input',linewidth=3)
-        plt.plot(range(N_input-1,N_input+N_output), np.concatenate([ input[N_input-1:N_input], target ]) ,label='target',linewidth=3)   
-        plt.plot(range(N_input-1,N_input+N_output),  np.concatenate([ input[N_input-1:N_input], preds ]) ,label='prediction',linewidth=3)
+        plt.plot(range(0,N_input) ,input[:,idx_tgt_col],label='input',linewidth=3)
+        plt.plot(range(N_input-1,N_input+N_output), np.concatenate([ input[N_input-1:N_input, idx_tgt_col], target.ravel() ]) ,label='target',linewidth=3)
+        plt.plot(range(N_input-1,N_input+N_output),  np.concatenate([ input[N_input-1:N_input, idx_tgt_col], preds.ravel() ]) ,label='prediction',linewidth=3)
         plt.xticks(range(0,40,2))
         plt.legend()
         k = k+1

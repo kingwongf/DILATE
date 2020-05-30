@@ -76,10 +76,11 @@ class LSTM(nn.Module):
         return predictions[-1]
 
 class MV_LSTM(torch.nn.Module):
-    def __init__(self,n_features,seq_length):
+    def __init__(self,n_features,seq_length, target_length):
         super(MV_LSTM, self).__init__()
         self.n_features = n_features
         self.seq_len = seq_length
+        self.target_length = target_length
         self.n_hidden = 20 # number of hidden states
         self.n_layers = 1 # number of LSTM layers (stacked)
 
@@ -111,9 +112,10 @@ class MV_LSTM(torch.nn.Module):
         # for following linear layer we want to keep batch_size dimension and merge rest
         # .contiguous() -> solves tensor compatibility error
 
-        print(f"lstm out shape: {lstm_out.shape}")
-        x= lstm_out[:,-1,:]
-        print(f"x shape : {x.shape}")
-        print(f"linear x shape: {self.l_linear(x).shape}")
-        print(f"linear x unsequeeze shape: {self.l_linear(x).unsqueeze(-1).shape}")
-        return self.l_linear(x).unsqueeze(-1)
+        # print(f"lstm out shape: {lstm_out.shape}")
+        # print(f"target_length: {self.target_length}")
+        x= lstm_out[:,-self.target_length:,:]
+        # print(f"x shape : {x.shape}")
+        # print(f"linear x shape: {self.l_linear(x).shape}")
+        # print(f"linear x unsequeeze shape: {self.l_linear(x).unsqueeze(-1).shape}")
+        return self.l_linear(x)
