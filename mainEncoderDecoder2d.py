@@ -3,11 +3,13 @@ import torch
 import pandas as pd
 from data.synthetic_dataset import create_synthetic_dataset, SyntheticDataset, CustomDataset, CustomDataset2d
 from models.seq2seq import EncoderRNN, DecoderRNN, Net_GRU, MV_LSTM
+from sklearn.preprocessing import StandardScaler
 from loss.dilate_loss import dilate_loss
 from torch.utils.data import DataLoader
 import random
 from tslearn.metrics import dtw, dtw_path
 import matplotlib.pyplot as plt
+from nn_soft_dtw import SoftDTW
 import warnings
 import warnings; warnings.simplefilter('ignore')
 
@@ -19,12 +21,25 @@ random.seed(0)
 N = 98
 ## 40 time steps in each N time series
 N_input = 20 ## first 20 time steps as input
-N_output = 5  ## last 20 time steps to predict
+N_output = 5  ## last 5 time steps to predict
 sigma = 0.01
-gamma = 0.01
+gamma = 1
+alpha=1
 n_features = 3
 seq_length = N_input
 target_col="US Equity"
+
+## US Equity
+df = pd.read_excel("data/data.xlsx", usecols=["US Equity", "US Bond", "UK Equity"])
+
+## TODO Trying without log
+## log_df = np.log(df)
+log_df = df
+
+
+scaled_log_df = (log_df - log_df.mean(axis=0))/log_df.std(axis=0)
+
+
 ## Load Custom time series
 
 ## limiting due to input and output step sizes and N size
@@ -70,16 +85,15 @@ def train_test_roll_win(df, target_col, N_input, N_output, r, no_of_train):
     # print(arr.shape)
     train, test = arr[:, :train_test_split, :], arr[:, train_test_split:, :]
 
-    # print(f"train: {train.shape}")
-    # print(train)
-    # print(f"test: {test.shape}")
-    # print(test)
+
+
 
 
     ## rolling window for train and test set
     window = N_input + N_output
     train = np.array([train[i, j:j+window] for i in range(train.shape[0]) for j in range(train.shape[1]-window+1)])
     test = np.array([test[i, j:j+window] for i in range(test.shape[0]) for j in range(test.shape[1]-window+1)])
+
     # print(f"rolling train shape: {train.shape}")
     # print(f"rolling test shape: {test.shape}")
     # print(train)
@@ -93,21 +107,23 @@ def train_test_roll_win(df, target_col, N_input, N_output, r, no_of_train):
 
     return train_input, train_target, test_input, test_target, int(total_no_batches)
 
-
-
-## US Equity
-df = pd.read_excel("data/data.xlsx", usecols=["US Equity", "US Bond", "UK Equity"])
-
-log_df = np.log(df)
 train_input, train_target, test_input, test_target, total_no_batches = \
-    train_test_roll_win(log_df, target_col=target_col, N_input=N_input, N_output=N_output,r=1/3, no_of_train=6)
+    train_test_roll_win(scaled_log_df, target_col=target_col, N_input=N_input, N_output=N_output,r=1/3, no_of_train=6)
 
 idx_tgt_col = df.columns.get_loc(target_col)
+
+target_log_mean = log_df.mean(axis=0).iloc[idx_tgt_col]
+target_log_std = log_df.std(axis=0).iloc[idx_tgt_col]
+
+print(f"input mean: {log_df.mean(axis=0)}")
+print(f"input std: {log_df.std(axis=0)}")
+print(f"target_log_mean: {target_log_mean}, target_log_std: {target_log_std}")
 
 ## TODO change back after fixing pred
 ## TODO output size from preds: (1, 1) to match target: (5, 1)
 
-batch_size = int(total_no_batches/13)
+# batch_size = int(total_no_batches/13)
+batch_size = int(total_no_batches)
 
 
 dataset_train = CustomDataset2d(train_input, train_target)
@@ -119,10 +135,12 @@ testloader  = DataLoader(dataset_test, batch_size=batch_size,shuffle=False, num_
 
 
 def train_model(net, batch_size,loss_type, learning_rate, epochs=1000, gamma = 0.001,
-                print_every=50,eval_every=50, verbose=1, Lambda=1, alpha=0.5):
+                print_every=50,eval_every=50, verbose=1, Lambda=1, alpha=0.5,
+                target_mean=0, target_std=0):
     
     optimizer = torch.optim.Adam(net.parameters(),lr=learning_rate)
     criterion = torch.nn.MSELoss()
+    criterion_softdtw = SoftDTW(gamma=gamma, normalize=True)
     
     for epoch in range(epochs): 
         for i, data in enumerate(trainloader, 0):
@@ -143,27 +161,56 @@ def train_model(net, batch_size,loss_type, learning_rate, epochs=1000, gamma = 0
 
 
             # forward + backward + optimize
-            print(f"input size: {inputs.size()}")
-            print(f"input size -1: {inputs.size(-1)}")
-            print(net)
+            # print(f"input size: {inputs.size()}")
+            # print(f"input size -1: {inputs.size(-1)}")
+            # print(net)
             outputs = net(inputs)
             loss_mse,loss_shape,loss_temporal = torch.tensor(0),torch.tensor(0),torch.tensor(0)
-            
+
+            ## TODO next run with dtw implementation
+            if(loss_type=='dtw'):
+                loss_dtw = criterion_softdtw(outputs, target)
+                loss = torch.mean(loss_dtw)
             if (loss_type=='mse'):
                 loss_mse = criterion(target,outputs)
                 loss = loss_mse                   
  
             if (loss_type=='dilate'):
-                loss, loss_shape, loss_temporal = dilate_loss(target,outputs,alpha, gamma, device)
-                  
+                loss, loss_shape, loss_temporal = dilate_loss(outputs, target,alpha, gamma, device)
+
+            # print(loss)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()          
-        
+            if epoch > 300:
+                for z in range(len(outputs.to(device).detach().cpu().numpy())):
+                    preds_arr = outputs.to(device).detach().cpu().numpy()[z,:,:] * target_std + target_mean
+                    input_arr = inputs.detach().cpu().numpy()[z,:,idx_tgt_col]* target_std+ target_mean
+                    target_arr = target.detach().cpu().numpy()[z, :,:]* target_std+ target_mean
+
+                    plt.plot(range(0, len(input_arr)), input_arr, label='input', linewidth=1)
+
+                    plt.plot(range(len(input_arr) - 1, len(input_arr) + len(target_arr)),
+                                np.concatenate([input_arr[len(input_arr)- 1:len(input_arr)],
+                                                target_arr.ravel()]),
+                                label='target', linewidth=1)
+
+                    plt.plot(range(len(input_arr) - 1, len(input_arr) + len(target_arr)),
+                                np.concatenate([input_arr[len(input_arr)- 1:len(input_arr)],
+                                                preds_arr.ravel()]),
+                                label='prediction', linewidth=1)
+                    plt.title(f"f{loss_type}: {loss.item()}, loss shape: {loss_shape.item()}, loss temporal: {loss_temporal.item()}")
+                    plt.show()
+
+
+
+
+
         if(verbose):
             if (epoch % print_every == 0):
                 print('epoch ', epoch, ' loss ',loss.item(),' loss shape ',loss_shape.item(),' loss temporal ',loss_temporal.item())
                 eval_model(net,testloader, gamma,verbose=1)
+
   
 
 def eval_model(net,loader, gamma,verbose=1):   
@@ -220,52 +267,156 @@ def eval_model(net,loader, gamma,verbose=1):
 
 
 print(f"batch_size: {batch_size}")
-encoder = EncoderRNN(input_size=3, hidden_size=128, num_grulstm_layers=1, batch_size=batch_size).to(device)
-decoder = DecoderRNN(input_size=1, hidden_size=128, num_grulstm_layers=1,fc_units=16, output_size=1).to(device)
+
+## TODO run with dtw implementation
+encoder = EncoderRNN(input_size=3, hidden_size=128, num_grulstm_layers=2, batch_size=batch_size).to(device)
+decoder = DecoderRNN(input_size=1, hidden_size=128, num_grulstm_layers=2,fc_units=16, output_size=1).to(device)
+net_gru_dtw = Net_GRU(encoder,decoder, N_output, device).to(device)
+
+train_model(net_gru_dtw, batch_size =batch_size,loss_type='dtw',
+            learning_rate=0.001, epochs=500, gamma=gamma, print_every=50,
+            eval_every=50,verbose=1, alpha=alpha, target_mean=target_log_mean, target_std=target_log_std)
+
+encoder = EncoderRNN(input_size=3, hidden_size=128, num_grulstm_layers=2, batch_size=batch_size).to(device)
+decoder = DecoderRNN(input_size=1, hidden_size=128, num_grulstm_layers=2,fc_units=16, output_size=1).to(device)
 net_gru_dilate = Net_GRU(encoder,decoder, N_output, device).to(device)
 
 # net_gru_dilate = MV_LSTM(n_features,seq_length, N_output).to(device)
 train_model(net_gru_dilate, batch_size =batch_size,loss_type='dilate',
-            learning_rate=0.001, epochs=500, gamma=gamma, print_every=50, eval_every=50,verbose=1)
+            learning_rate=0.001, epochs=500, gamma=gamma, print_every=50,
+            eval_every=50,verbose=1, alpha=alpha, target_mean=target_log_mean, target_std=target_log_std)
 
-encoder = EncoderRNN(input_size=3, hidden_size=128, num_grulstm_layers=1, batch_size=batch_size).to(device)
-decoder = DecoderRNN(input_size=1, hidden_size=128, num_grulstm_layers=1,fc_units=16, output_size=1).to(device)
+encoder = EncoderRNN(input_size=3, hidden_size=128, num_grulstm_layers=2, batch_size=batch_size).to(device)
+decoder = DecoderRNN(input_size=1, hidden_size=128, num_grulstm_layers=2,fc_units=16, output_size=1).to(device)
 net_gru_mse = Net_GRU(encoder,decoder, N_output, device).to(device)
 # net_gru_mse = MV_LSTM(n_features,seq_length, N_output).to(device)
 
 train_model(net_gru_mse, batch_size=batch_size,loss_type='mse',
-            learning_rate=0.001, epochs=500, gamma=gamma, print_every=50, eval_every=50,verbose=1)
+            learning_rate=0.001, epochs=500, gamma=gamma, print_every=50,
+            eval_every=50,verbose=1, alpha=alpha, target_mean=target_log_mean, target_std=target_log_std)
+
+
 
 # Visualize results
 gen_test = iter(testloader)
-# test_inputs, test_targets, breaks = next(gen_test)
 test_inputs, test_targets= next(gen_test)
 
-test_inputs  = torch.tensor(test_inputs, dtype=torch.float32).to(device)
+test_inputs = torch.tensor(test_inputs, dtype=torch.float32).to(device)
 test_targets = torch.tensor(test_targets, dtype=torch.float32).to(device)
 criterion = torch.nn.MSELoss()
 
-nets = [net_gru_mse,net_gru_dilate]
-# nets = [net_gru_dilate]
+nets = [net_gru_mse, net_gru_dtw,net_gru_dilate]
+nets_name = ["net_gru_mse", "net_gru_dtw","net_gru_dilate"]
 
-for ind in range(1,51):
-    plt.figure()
-    plt.rcParams['figure.figsize'] = (17.0,5.0)  
-    k = 1
-    for net in nets:
+######################################################################################################################
+############################################## RAN ABOVE ON CONSOLE ##################################################
+######################################################################################################################
+
+## Testing for first input/target loss
+
+criterion_softdtw = SoftDTW(gamma=gamma, normalize=True)
+
+zero_inputs = test_inputs.detach().cpu().numpy()[0,:,idx_tgt_col]* target_log_std+ target_log_mean
+zero_targets = test_targets.detach().cpu().numpy()[0,:,:]* target_log_std+ target_log_mean
+zero_mse_pred = net_gru_mse(test_inputs).to(device).detach().cpu().numpy()[0,:,:]* target_log_std+ target_log_mean
+zero_dtw_pred = net_gru_dtw(test_inputs).to(device).detach().cpu().numpy()[0,:,:]* target_log_std+ target_log_mean
+zero_dilate_pred = net_gru_dilate(test_inputs).to(device).detach().cpu().numpy()[0,:,:]* target_log_std+ target_log_mean
+
+print(f"zero input:{zero_inputs}")
+print(f"zero targets:{zero_targets}")
+print(f"zero mse:{zero_mse_pred}")
+print(f"zero dtw:{zero_dtw_pred}")
+print(f"zero dilate:{zero_dilate_pred}")
+print(f"mse net mse: {criterion(test_targets, net_gru_mse(test_inputs))}, "
+      f"dtw: {criterion_softdtw(test_targets, net_gru_mse(test_inputs))}, "
+      f"dilate: {dilate_loss(net_gru_mse(test_inputs), test_targets, alpha=alpha, gamma=gamma, device=device)} ")
+
+print(f"dtw net mse: {criterion(test_targets, net_gru_dtw(test_inputs))}, "
+      f"dtw: {criterion_softdtw(test_targets, net_gru_dtw(test_inputs))}, "
+      f"dilate: {dilate_loss(net_gru_dtw(test_inputs), test_targets, alpha=alpha, gamma=gamma, device=device)}, ")
+
+print(f"dilate net mse: {criterion(test_targets, net_gru_dilate(test_inputs))}, "
+      f"dtw: {criterion_softdtw(test_targets, net_gru_dilate(test_inputs))}, "
+      f"dilate: {dilate_loss(net_gru_dilate(test_inputs), test_targets, alpha=alpha, gamma=gamma, device=device)}, ")
+
+
+
+
+
+'''
+
+pred_net_gru_mse = net_gru_mse(test_inputs).to(device)
+print(pred_net_gru_mse.detach().cpu().numpy())
+pred_net_gru_mse = pred_net_gru_mse.detach().cpu().numpy()
+
+
+pred_net_gru_dilate = net_gru_dilate(test_inputs).to(device)
+pred_net_gru_dilate = pred_net_gru_dilate.detach().cpu().numpy()
+
+pred_net_gru_dtw = net_gru_dtw(test_inputs).to(device)
+pred_net_gru_dtw = pred_net_gru_dtw.detach().cpu().numpy()
+
+
+input = test_inputs.detach().cpu().numpy()
+print(input)
+
+
+target =  test_targets.detach().cpu().numpy()
+print(target)
+'''
+
+######################################################################################################################
+
+
+
+
+
+for ind in range(1,39):
+    fig, axs = plt.subplots(1, 3, sharey='col')
+    for i, net in enumerate(nets):
         pred = net(test_inputs).to(device)
 
         input = test_inputs.detach().cpu().numpy()[ind,:,:]
         target = test_targets.detach().cpu().numpy()[ind,:,:]
         preds = pred.detach().cpu().numpy()[ind,:,:]
 
+        ## select target column in input
+        input = input[:,idx_tgt_col]
+
+
+
+        ## Scaling back to original
+        input = input * target_log_std+ target_log_mean
+        target = target * target_log_std + target_log_mean
+        preds = preds * target_log_std + target_log_mean
+
+        print("before exponential")
+        print(f"input: {input}, target: {target}, preds: {preds}")
+
+        # input, target, preds = np.e**input, np.e**target, np.e**preds
+        print("after exponential")
+        print(f"input: {input}, target: {target}, preds: {preds}")
+
+
+
+
         print(f"input: {input.shape}, target: {target.shape}, preds: {preds.shape}")
-        plt.subplot(1,2,k)
-        plt.plot(range(0,N_input) ,input[:,idx_tgt_col],label='input',linewidth=3)
-        plt.plot(range(N_input-1,N_input+N_output), np.concatenate([ input[N_input-1:N_input, idx_tgt_col], target.ravel() ]) ,label='target',linewidth=3)
-        plt.plot(range(N_input-1,N_input+N_output),  np.concatenate([ input[N_input-1:N_input, idx_tgt_col], preds.ravel() ]) ,label='prediction',linewidth=3)
-        plt.xticks(range(0,40,2))
-        plt.legend()
-        k = k+1
+
+
+        axs[i].plot(range(0,N_input) ,input,label='input',linewidth=1)
+
+        axs[i].plot(range(N_input-1,N_input+N_output),
+                    np.concatenate([ input[N_input-1:N_input],
+                                     target.ravel() ]),
+                    label='target',linewidth=1)
+
+        axs[i].plot(range(N_input-1,N_input+N_output),
+                    np.concatenate([ input[N_input-1:N_input],
+                                     preds.ravel() ]),
+                    label='prediction',linewidth=1)
+        # axs[i].xticks(range(0,40,2))
+        axs[i].legend()
+        axs[i].set_title(nets_name[i])
 
     plt.show()
+

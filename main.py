@@ -22,6 +22,7 @@ N_input = 30 ## first 20 time steps as input
 N_output = 10  ## last 20 time steps to predict
 sigma = 0.01
 gamma = 0.01
+alpha =0.5
 '''
 
 # Load synthetic dataset

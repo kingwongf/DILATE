@@ -30,7 +30,7 @@ class DecoderRNN(nn.Module):
         self.out = nn.Linear(fc_units, output_size)
 
     def forward(self, input, hidden):
-        print(f"decoder forward input size: {input.size()}")
+        # print(f"decoder forward input size: {input.size()}")
         output, hidden = self.gru(input, hidden)
         output = F.relu(self.fc(output))
         output = self.out(output)
@@ -50,14 +50,16 @@ class Net_GRU(nn.Module):
         encoder_hidden = self.encoder.init_hidden(self.device)
         for ei in range(input_length):
             encoder_output, encoder_hidden = self.encoder(x[:, ei:ei + 1, :], encoder_hidden)
-        print(f"encoder output shape: {encoder_output.size()}")
-        print(f"encoder_hidden shape: {encoder_hidden.size()}")
-        print(f"x, decoder_input size: {x.size()}")
+        # print(f"encoder output shape: {encoder_output.size()}")
+        # print(f"encoder_hidden shape: {encoder_hidden.size()}")
+        # print(f"x, decoder_input size: {x.size()}")
         decoder_input = x[:, -1, :].unsqueeze(1)  # first decoder input= last element of input sequence
         decoder_hidden = encoder_hidden
 
         outputs = torch.zeros([x.shape[0], self.target_length, x.shape[2]]).to(self.device)
-        print(f"outputs size: {outputs.size()}")
+        # print(f"outputs size: {outputs.size()}")
+        print(f"decoder first input size: {decoder_input.size()}")
+        print(f"decoder first input: {decoder_input}")
 
         for di in range(self.target_length):
             decoder_output, decoder_hidden = self.decoder(decoder_input, decoder_hidden)

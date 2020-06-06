@@ -98,11 +98,25 @@ def train_test_roll_win(df, target_col, N_input, N_output, r, no_of_train):
 ## US Equity
 df = pd.read_excel("data/data.xlsx", usecols=["US Equity", "US Bond", "UK Equity"])
 
-log_df = np.log(df)
+log_df = df
+
+scaled_log_df = (log_df - log_df.mean(axis=0))/log_df.std(axis=0)
+
+
+
 train_input, train_target, test_input, test_target, total_no_batches = \
-    train_test_roll_win(log_df, target_col=target_col, N_input=N_input, N_output=N_output,r=1/3, no_of_train=6)
+    train_test_roll_win(scaled_log_df, target_col=target_col, N_input=N_input, N_output=N_output,r=1/3, no_of_train=6)
 
 idx_tgt_col = df.columns.get_loc(target_col)
+
+
+target_log_mean = log_df.mean(axis=0).iloc[idx_tgt_col]
+target_log_std = log_df.std(axis=0).iloc[idx_tgt_col]
+
+print(f"input mean: {log_df.mean(axis=0)}")
+print(f"input std: {log_df.std(axis=0)}")
+print(f"target_log_mean: {target_log_mean}, target_log_std: {target_log_std}")
+
 
 ## TODO change back after fixing pred
 ## TODO output size from preds: (1, 1) to match target: (5, 1)
@@ -257,11 +271,19 @@ for ind in range(1,51):
         target = test_targets.detach().cpu().numpy()[ind,:,:]
         preds = pred.detach().cpu().numpy()[ind,:,:]
 
+        ## select target column in input
+        input = input[:, idx_tgt_col]
+
+        ## Scaling back to original
+        input = input * target_log_std + target_log_mean
+        target = target * target_log_std + target_log_mean
+        preds = preds * target_log_std + target_log_mean
+
         print(f"input: {input.shape}, target: {target.shape}, preds: {preds.shape}")
         plt.subplot(1,2,k)
-        plt.plot(range(0,N_input) ,input[:,idx_tgt_col],label='input',linewidth=3)
-        plt.plot(range(N_input-1,N_input+N_output), np.concatenate([ input[N_input-1:N_input, idx_tgt_col], target.ravel() ]) ,label='target',linewidth=3)
-        plt.plot(range(N_input-1,N_input+N_output),  np.concatenate([ input[N_input-1:N_input, idx_tgt_col], preds.ravel() ]) ,label='prediction',linewidth=3)
+        plt.plot(range(0,N_input) ,input,label='input',linewidth=3)
+        plt.plot(range(N_input-1,N_input+N_output), np.concatenate([ input[N_input-1:N_input], target.ravel() ]) ,label='target',linewidth=3)
+        plt.plot(range(N_input-1,N_input+N_output),  np.concatenate([ input[N_input-1:N_input], preds.ravel() ]) ,label='prediction',linewidth=3)
         plt.xticks(range(0,40,2))
         plt.legend()
         k = k+1

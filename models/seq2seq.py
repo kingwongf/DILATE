@@ -8,15 +8,19 @@ class EncoderRNN(torch.nn.Module):
         self.hidden_size = hidden_size
         self.batch_size = batch_size
         self.num_grulstm_layers = num_grulstm_layers
-        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, num_layers=num_grulstm_layers,batch_first=True)
+
+        ## TODO rerun to add dropout with two grulstm layers
+        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size,
+                          num_layers=num_grulstm_layers,batch_first=True, dropout=0.3)
+        # self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, num_layers=num_grulstm_layers,batch_first=True)
 
     def forward(self, input, hidden): # input [batch_size, length T, dimensionality d]      
-        output, hidden = self.gru(input, hidden)      
+        output, hidden = self.gru(input, hidden)
         return output, hidden
     
     def init_hidden(self,device):
         #[num_layers*num_directions,batch,hidden_size]
-        print(f"batch_size in encoder init hidden state: {self.batch_size}")
+        # print(f"batch_size in encoder init hidden state: {self.batch_size}")
         return torch.zeros(self.num_grulstm_layers, self.batch_size, self.hidden_size, device=device)
         # return (torch.zeros(self.num_grulstm_layers, self.batch_size, self.hidden_size, device=device),
         #         torch.zeros(self.num_grulstm_layers, self.batch_size, self.hidden_size, device=device),
@@ -27,16 +31,108 @@ class DecoderRNN(nn.Module):
         super(DecoderRNN, self).__init__()
         ##TODO trying to match input as batch size is axis=1, not first=> axis=0
         # self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, num_layers=num_grulstm_layers,batch_first=True)
-        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, num_layers=num_grulstm_layers)
+        self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size,
+                          num_layers=num_grulstm_layers, dropout=0.3)
         self.fc = nn.Linear(hidden_size, fc_units)
         self.out = nn.Linear(fc_units, output_size)         
         
     def forward(self, input, hidden):
-        print(f"decoder forward input size: {input.size()}")
+        # print(f"decoder forward input size: {input.size()}")
         output, hidden = self.gru(input, hidden) 
         output = F.relu( self.fc(output) )
         output = self.out(output[-1])
         return output, hidden
+
+
+class EncoderSimple(torch.nn.Module):
+    def __init__(self, input_size, hidden_size, num_grulstm_layers, batch_size):
+        super(EncoderSimple, self).__init__()
+        self.hidden_size = hidden_size
+        self.batch_size = batch_size
+        self.num_grulstm_layers = num_grulstm_layers
+
+        ## TODO rerun to add dropout with two grulstm layers
+        self.simple = nn.Sequential(
+            nn.Linear(input_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, 64)
+        )
+        # self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, num_layers=num_grulstm_layers,batch_first=True)
+
+    def forward(self, input, hidden):  # input [batch_size, length T, dimensionality d]
+        output, hidden = self.simple(input)
+        return output, hidden
+
+    def init_hidden(self, device):
+        # [num_layers*num_directions,batch,hidden_size]
+        # print(f"batch_size in encoder init hidden state: {self.batch_size}")
+        return torch.zeros(self.num_grulstm_layers, self.batch_size, self.hidden_size, device=device)
+        # return (torch.zeros(self.num_grulstm_layers, self.batch_size, self.hidden_size, device=device),
+        #         torch.zeros(self.num_grulstm_layers, self.batch_size, self.hidden_size, device=device),
+        #         torch.zeros(self.num_grulstm_layers, self.batch_size, self.hidden_size, device=device))
+
+
+class DecoderSimple(nn.Module):
+    def __init__(self, input_size, hidden_size, num_grulstm_layers, fc_units, output_size):
+        super(DecoderSimple, self).__init__()
+        ##TODO trying to match input as batch size is axis=1, not first=> axis=0
+        # self.gru = nn.GRU(input_size=input_size, hidden_size=hidden_size, num_layers=num_grulstm_layers,batch_first=True)
+        self.simple = nn.Sequential(
+            nn.Linear(input_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, 64),
+            nn.ReLU(),
+            nn.Linear(64,output_size)
+        )
+
+
+    def forward(self, input, hidden):
+        # print(f"decoder forward input size: {input.size()}")
+        output, hidden = self.simple(input)
+        return output, hidden
+
+class simpleGRU(nn.Module):
+    def __init__(self, encoder, decoder, target_length, device):
+        super(simpleGRU, self).__init__()
+        self.encoder = encoder
+        self.decoder = decoder
+        self.target_length = target_length
+        self.device = device
+
+    def forward(self, x):
+        input_length  = x.shape[1]
+        encoder_hidden = self.encoder.init_hidden(self.device)
+        for ei in range(input_length):
+            encoder_output, encoder_hidden = self.encoder(x[:,ei:ei+1,:]  , encoder_hidden)
+        # print(f"encoder output shape: {encoder_output.size()}")
+        # rint(f"encoder_hidden shape: {encoder_hidden.size()}")
+        # print(f"x, decoder_input size: {x.size()}")
+
+        batch_size, num_steps, n_feats = x.size()
+        decoder_input = torch.tensor([[0.0]] * batch_size, dtype=torch.float)
+        decoder_input = decoder_input.unsqueeze(0)
+        ## TODO trying to init decoder input with 0s
+        # decoder_input = x[:,-1,:].unsqueeze(1) # first decoder input= last element of input sequence
+
+        decoder_hidden = encoder_hidden
+
+        outputs = torch.zeros([x.shape[0], self.target_length, 1] ).to(self.device)
+        ## TODO changed last dim to 1 because trying to predict 1 feat only
+        ## outputs = torch.zeros([x.shape[0], self.target_length, x.shape[2]]  ).to(self.device)
+
+        # print(f"outputs size: {outputs.size()}") ### orig seq2seq outputs size: torch.Size([49, 10, 1])
+        for di in range(self.target_length):
+            # print(f"decoder_input size: {decoder_input.size()}")
+
+            # decoder_output, decoder_hidden = self.decoder(decoder_input, decoder_hidden)
+            decoder_output, decoder_hidden = self.decoder(decoder_input, decoder_hidden)
+            decoder_input = decoder_output.unsqueeze(0)
+            # print(f"successful di: {di}")
+            # print(f"new decoder input size: {decoder_input.size()}")
+            # print(f"new decoder output size: {decoder_output.size()}")
+            # print(f"new decoder output size: {decoder_output.decoder_output.unsqueeze(-1).size()}")
+            outputs[:,di:di+1,:] = decoder_output.unsqueeze(-1)
+        return outputs
 
 class Net_GRU(nn.Module):
     def __init__(self, encoder, decoder, target_length, device):
@@ -51,9 +147,9 @@ class Net_GRU(nn.Module):
         encoder_hidden = self.encoder.init_hidden(self.device)
         for ei in range(input_length):
             encoder_output, encoder_hidden = self.encoder(x[:,ei:ei+1,:]  , encoder_hidden)
-        print(f"encoder output shape: {encoder_output.size()}")
-        print(f"encoder_hidden shape: {encoder_hidden.size()}")
-        print(f"x, decoder_input size: {x.size()}")
+        # print(f"encoder output shape: {encoder_output.size()}")
+        # rint(f"encoder_hidden shape: {encoder_hidden.size()}")
+        # print(f"x, decoder_input size: {x.size()}")
 
         batch_size, num_steps, n_feats = x.size()
         decoder_input = torch.tensor([[0.0]] * batch_size, dtype=torch.float)
@@ -67,17 +163,17 @@ class Net_GRU(nn.Module):
         ## TODO changed last dim to 1 because trying to predict 1 feat only
         ## outputs = torch.zeros([x.shape[0], self.target_length, x.shape[2]]  ).to(self.device)
 
-        print(f"outputs size: {outputs.size()}") ### orig seq2seq outputs size: torch.Size([49, 10, 1])
+        # print(f"outputs size: {outputs.size()}") ### orig seq2seq outputs size: torch.Size([49, 10, 1])
         for di in range(self.target_length):
-            print(f"decoder_input size: {decoder_input.size()}")
+            # print(f"decoder_input size: {decoder_input.size()}")
 
             # decoder_output, decoder_hidden = self.decoder(decoder_input, decoder_hidden)
             decoder_output, decoder_hidden = self.decoder(decoder_input, decoder_hidden)
             decoder_input = decoder_output.unsqueeze(0)
-            print(f"successful di: {di}")
-            print(f"new decoder input size: {decoder_input.size()}")
-            print(f"new decoder output size: {decoder_output.size()}")
-            print(f"decoder output to outputs size: {decoder_output.decoder_output.unsqueeze(-1).size()}")
+            # print(f"successful di: {di}")
+            # print(f"new decoder input size: {decoder_input.size()}")
+            # print(f"new decoder output size: {decoder_output.size()}")
+            # print(f"new decoder output size: {decoder_output.decoder_output.unsqueeze(-1).size()}")
             outputs[:,di:di+1,:] = decoder_output.unsqueeze(-1)
         return outputs
 
