@@ -1,11 +1,12 @@
-# DILATE: DIstortion Loss with shApe and tImE
-[Vincent Le Guen](https://www.linkedin.com/in/vincentleguen/),  [Nicolas Thome](http://cedric.cnam.fr/~thomen/)
+## DILATE Loss Model for Financial Market Indices Forecasting
+Using the purposed loss objective, DILATE here [paper](https://papers.nips.cc/paper/8672-shape-and-time-distortion-loss-for-training-deep-time-series-forecasting-models), a seq2seq model has been trained. The out-of-sample loss in forecasting US Equity index below.
 
-Code for our NeurIPS 2019 paper "Shape and Time Distortion Loss for Training Deep Time Series Forecasting Models"
 
-![](https://github.com/vincent-leguen/DILATE/blob/master/fig2.png)
-
-If you find this code useful for your research, please cite our [paper](https://papers.nips.cc/paper/8672-shape-and-time-distortion-loss-for-training-deep-time-series-forecasting-models):
+|                  |   MSE |   DTW |    TDI |
+|------------------|-------|-------|--------|
+| net_gru_mse      | **2.219** | 1.992 | 0.0364 |
+| net_gru_soft_dtw | 2.239 | **1.921** | 0.0321 |
+| net_gru_dilate   | 2.381 | 2.051 | **0.0236** |
 
 ```
 @incollection{leguen19dilate,
@@ -16,6 +17,3 @@ pages = {4191--4203},
 year = {2019}
 }
 ```
-
-## Abstract
-This paper addresses the problem of time series forecasting for non-stationary signals and multiple future steps prediction. To handle this challenging task, we introduce DILATE (DIstortion Loss including shApe and TimE), a new objective function for training deep neural networks. DILATE aims at accurately predicting sudden changes, and explicitly incorporates two terms supporting precise shape and temporal change detection. We introduce a differentiable loss function suitable for training deep neural nets, and provide a custom back-prop implementation for speeding up optimization. We also introduce a variant of DILATE, which provides a smooth generalization of temporally-constrained Dynamic Time Warping (DTW). Experiments carried out on various non-stationary datasets reveal the very good behaviour of DILATE compared to models trained with the standard Mean Squared Error (MSE) loss function, and also to DTW and variants. DILATE is also agnostic to the choice of the model, and we highlight its benefit for training fully connected networks as well as specialized recurrent architectures, showing its capacity to improve over state-of-the-art trajectory forecasting approaches.
