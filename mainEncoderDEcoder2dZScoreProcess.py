@@ -11,6 +11,10 @@ from tslearn.metrics import dtw, dtw_path
 import matplotlib.pyplot as plt
 from nn_soft_dtw import SoftDTW
 import warnings
+pd.set_option('display.max_columns', None)  # or 1000
+pd.set_option('display.max_rows', None)  # or 1000
+pd.set_option('display.max_colwidth', -1)  # or 199
+
 
 
 
@@ -23,13 +27,15 @@ class process:
 
         ## US Equity
         df = pd.read_excel("data/data.xlsx", index_col='Date').ffill().dropna(axis=0)
+        mean_df = df.expanding().mean()
+        vol_df = df.expanding().std()
 
         # parameters
 
         self.N = 98
         ## 40 time steps in each N time series
-        self.N_input = 22  ## first 22 time steps as input
-        self.N_output = 3  ## last 3 time steps to predict
+        self.N_input = 22  ## first 20 time steps as input
+        self.N_output = 3  ## last 5 time steps to predict
         self.sigma = 0.01
         self.gamma = 1
         self.alpha = 0.5
@@ -39,63 +45,20 @@ class process:
 
         self.shuffle_train = False
 
+
         self.hidden_size = 128 ## 64
         self.num_grulstm_layers = 3
 
         self.idx_tgt_col = df.columns.get_loc(self.target_col)
 
-        self.df = df
+        ## TODO added log transform
+        self.df = (df-mean_df)/vol_df
+        self.df.replace([np.inf, -np.inf], 0, inplace=True)
+
+        self.mean_df, self.vol_df = mean_df, vol_df
 
 
-    def train_test_roll_win(self,df, target_col, N_input, N_output, r, no_of_train):
-        '''
-        arr_length = total_no_batches * (1 + r) * (N_input + N_output) * no_of_train
-        r: no. of train set/no. of test set
-        no. of test = r * no. of train set, needs to be an intrger > 1
 
-        :param ndarr: dim = (time, n_features)
-        :param window:
-        :return:
-        '''
-        # arr = np.array([ndarr[i:i+window] for i in range(ndarr.shape[0]-window+1)])
-        ndarr = df.dropna(axis=0).values
-        # print(((1+r)* (N_input + N_output) * no_of_train))
-        total_no_batches = np.round(ndarr.shape[0] // ((1 + r) * (N_input + N_output) * no_of_train))
-
-        resize_ndarr = ndarr[len(ndarr) - int(total_no_batches * (1 + r) * (N_input + N_output) * no_of_train):]
-        print(f"total_no_batches: {total_no_batches}, ndarr: {ndarr.shape}, ndarr_resized: {resize_ndarr.shape}")
-        print(f"N_input: {N_input}, N_output: {N_output}, r: {r}, no_of_train: {no_of_train}")
-
-        # print(total_no_batches * (1 + r) * (N_input + N_output) * no_of_train)
-        # print(int(total_no_batches * (1 + r) * (N_input + N_output) * no_of_train))
-        assert len(resize_ndarr) == int(total_no_batches * (1 + r) * (N_input + N_output) * no_of_train)
-        assert len(resize_ndarr) % total_no_batches == 0
-
-        n_feat = resize_ndarr.shape[1]
-        arr = resize_ndarr.reshape(int(total_no_batches),
-                                   int(np.round((N_input + N_output) * (1 + r) * no_of_train)),
-                                   n_feat)
-
-
-        train_test_split = int((arr.shape[1] * 0.6))
-        train, test = arr[:, :train_test_split, :], arr[:, train_test_split:, :]
-
-        ## rolling window for train and test set
-        window = N_input + N_output
-        train = np.array(
-            [train[i, j:j + window] for i in range(train.shape[0]) for j in range(train.shape[1] - window + 1)]
-        )
-
-        test = np.array([test[i, j:j + window] for i in range(test.shape[0])
-                         for j in range(test.shape[1] - window + 1)])
-
-
-        train_input, train_target = train[:, :N_input, :], train[:, -N_output:, self.idx_tgt_col]
-
-
-        test_input, test_target = test[:, :N_input, :], test[:, -N_output:, self.idx_tgt_col]
-
-        return train_input, train_target, test_input, test_target, int(total_no_batches)
 
     def train_test_roll_win_2(self,df, target_col, N_input, N_output, r):
         '''
@@ -107,56 +70,24 @@ class process:
         :param window:
         :return:
         '''
-        print(df.shape)
         # arr = np.array([ndarr[i:i+window] for i in range(ndarr.shape[0]-window+1)])
         num_features = df.shape[1]
         idx_tgt_col = df.columns.get_loc(target_col)
-        ndarr = df.dropna(axis=0).values
+        ndarr = df.values
+
+
+
 
         batch_size = int((N_input + N_output) * (1 / r + 1))
         total_num_batches = int((ndarr.shape[0]) // batch_size)
         window = N_input + N_output
-
-        print(f"batch_size: {batch_size}, total_num_batches: {total_num_batches}, window: {window}")
-
         ndarr = ndarr[-batch_size * total_num_batches:]
         ndarr = ndarr.reshape(total_num_batches, batch_size, num_features)
-        print(f"ndarr: {ndarr.shape}")
 
         total_train_legnth = int((1 / r) * batch_size / (1 / r + 1))
 
         train_ndarr, test_ndarr = ndarr[:, :total_train_legnth], ndarr[:, total_train_legnth - N_input:]
 
-        ## Scaling train and test for each segments
-
-        seg_train_means = np.mean(train_ndarr, axis=1)
-        seg_train_stds = np.std(train_ndarr, axis=1)
-
-        ## TODO trying only scaling with first mean and first std
-        # seg_train_means = seg_train_means[0]
-        # seg_train_means = seg_train_means[np.newaxis, :]
-        # seg_train_stds = seg_train_stds[0]
-        # seg_train_stds = seg_train_stds[np.newaxis, :]
-
-
-        print(f"seg_train_means shape: {seg_train_means.shape}")
-        print(f"seg_train_stds shape: {seg_train_stds.shape}")
-        print(test_ndarr.shape)
-
-        ## Reshaping means and stds to test size
-        train_means_test_size = np.broadcast_to(seg_train_means[:, np.newaxis, :], test_ndarr.shape)
-        train_stds_test_size = np.broadcast_to(seg_train_stds[:, np.newaxis, :], test_ndarr.shape)
-
-
-        # print(f"broadcast train scaling {np.broadcast_to(seg_train_means[:,np.newaxis,:], train_ndarr.shape).shape}")
-
-        ## Scaling train and test sets with train means and stds
-        train_ndarr = (train_ndarr - np.broadcast_to(seg_train_means[:, np.newaxis, :], train_ndarr.shape)) / \
-                      np.broadcast_to(seg_train_stds[:, np.newaxis, :], train_ndarr.shape)
-
-        test_ndarr = (test_ndarr - train_means_test_size) / train_stds_test_size
-
-        print(f"train_means_test_size: {type(train_means_test_size)}")
 
         ## rolling window within train set
         train_ndarr = np.array(
@@ -167,28 +98,19 @@ class process:
             [test_ndarr[i, j:j + window] for i in range(test_ndarr.shape[0]) for j in
              range(test_ndarr.shape[1] - window + 1)]
         )
-        ## reshaping mean and std for test set of rolling window
-        test_means_ndarr = np.array(
-            [train_means_test_size[i, j:j + window] for i in range(train_means_test_size.shape[0]) for j in
-             range(train_means_test_size.shape[1] - window + 1)]
-        )
-
-        test_stds_ndarr = np.array(
-            [train_stds_test_size[i, j:j + window] for i in range(train_stds_test_size.shape[0]) for j in
-             range(train_stds_test_size.shape[1] - window + 1)]
-        )
-
 
         train_input, train_target = train_ndarr[:, :N_input, :], train_ndarr[:, -N_output:, idx_tgt_col]
         test_input, test_target = test_ndarr[:, :N_input, :], test_ndarr[:, -N_output:, idx_tgt_col]
 
-        means_input, means_target = test_means_ndarr[:, :N_input, :], test_means_ndarr[:, -N_output:, idx_tgt_col]
-        stds_input, stds_target = test_stds_ndarr[:, :N_input, :], test_stds_ndarr[:, -N_output:, idx_tgt_col]
+        # means_input, means_target = test_means_ndarr[:, :N_input, :], test_means_ndarr[:, -N_output:, idx_tgt_col]
+        # stds_input, stds_target = test_stds_ndarr[:, :N_input, :], test_stds_ndarr[:, -N_output:, idx_tgt_col]
 
         num_train, num_test = train_input.shape[0], test_input.shape[0]
 
-        return train_input, train_target, test_input, test_target, \
-           means_input, means_target, stds_input, stds_target, num_train, num_test
+        return train_input, train_target, test_input, test_target, num_train, num_test
+
+
+
 
     def train_model(self,net, batch_size, loss_type, learning_rate, epochs=1000, gamma=0.001,
                     print_every=50, eval_every=50, verbose=1, Lambda=1, alpha=0.5):
@@ -230,11 +152,9 @@ class process:
                 if (epoch % print_every == 0):
                     print('epoch ', epoch, ' loss ', loss.item(), ' loss shape ', loss_shape.item(), ' loss temporal ',
                           loss_temporal.item())
-                    self.eval_model(net, self.testloader, batch_size, gamma, verbose=1,
-                               target_mean=0, target_std=0)
+                    self.eval_model(net, self.testloader, batch_size, gamma, verbose=1)
 
-    def eval_model(self, net, loader, batch_size, gamma, verbose=1,
-                   target_mean=0, target_std=0):
+    def eval_model(self, net, loader, batch_size, gamma, verbose=1):
         criterion = torch.nn.MSELoss()
         losses_mse = []
         losses_dtw = []
@@ -321,16 +241,15 @@ class process:
 
         criterion_softdtw = SoftDTW(gamma=self.gamma, normalize=True)
 
-        zero_inputs = test_inputs.detach().cpu().numpy()[0, :, self.idx_tgt_col] * self.target_std + self.target_mean
-        zero_targets = test_targets.detach().cpu().numpy()[0, :, :] * self.target_std + self.target_mean
+        zero_inputs = test_inputs.detach().cpu().numpy()[0, :, self.idx_tgt_col]
+        zero_targets = test_targets.detach().cpu().numpy()[0, :, :]
 
         zero_mse_pred = net_gru_mse(test_inputs).to(self.device).detach().cpu().numpy()[0, :,
-                        :] * self.target_std + self.target_mean
+                        :]
         zero_dtw_pred = net_gru_dtw(test_inputs).to(self.device).detach().cpu().numpy()[0, :,
-                        :] * self.target_std + self.target_mean
+                        :]
         zero_dilate_pred = net_gru_dilate(test_inputs).to(self.device).detach().cpu().numpy()[0, :,
-                           :] * self.target_std + self.target_mean
-
+                           :]
         print(f"zero input:{zero_inputs}")
         print(f"zero targets:{zero_targets}")
         print(f"zero mse:{zero_mse_pred}")
@@ -349,10 +268,8 @@ class process:
               f"dilate: {dilate_loss(net_gru_dilate(test_inputs), test_targets, alpha=self.alpha, gamma=self.gamma, device=self.device)}, ")
 
     def main(self):
-        # train_input, train_target, test_input, test_target, total_no_batches = self.train_test_roll_win(self.scaled_df, target_col=self.target_col, N_input=self.N_input, N_output=self.N_output,r=1 / 3, no_of_train=6)
 
-        train_input, train_target, test_input, test_target, \
-        means_input, means_target, stds_input, stds_target, num_train, num_test = \
+        train_input, train_target, test_input, test_target, num_train, num_test = \
             self.train_test_roll_win_2(self.df, target_col=self.target_col,
                                      N_input=self.N_input, N_output=self.N_output,
                                      r=1 / 3)
@@ -365,19 +282,21 @@ class process:
         print(f"num_train:{num_train}, "
               f"num_test: {num_test}")
 
-        print(f"means_input : {means_input.shape}")
-        print(f"means_target : {means_target.shape}")
-        print(f"stds_input : {stds_input.shape}")
-        print(f"stds_target : {stds_target.shape}")
 
-        ## can't call shape somehow
-        # f"test_means_ndarr: {test_means_ndarr.shape}, "
-        # f"test_stds_ndarr: {test_stds_ndarr.shape}, "
+        ## get mean and vol df
+        ## mean first
+
+        _, _, self.mean_test_input, self.mean_test_target, _, _ = self.train_test_roll_win_2(self.mean_df, target_col=self.target_col,
+                                     N_input=self.N_input, N_output=self.N_output,
+                                     r=1 / 3)
+
+        _, _, self.vol_test_input, self.vol_test_target, _, _ = self.train_test_roll_win_2(self.vol_df,
+                                                                                   target_col=self.target_col,
+                                                                                   N_input=self.N_input,
+                                                                                   N_output=self.N_output,
+                                                                                   r=1 / 3)
 
 
-
-        ## TODO change back after fixing pred
-        ## TODO output size from preds: (1, 1) to match target: (5, 1)
 
         # batch_size = int(total_no_batches/13)
         # self.batch_size = batch_size = int(min(num_train//23, num_test//23))
@@ -400,19 +319,12 @@ class process:
         # nets_name = ["net_gru_dtw"]
         nets_name = ["net_gru_mse", "net_gru_dtw", "net_gru_dilate"]
 
-        # test_inputs, test_targets, criterion = self.test()
 
 
-        # test_inputs, test_targets = next(gen_test)
+        return nets, nets_name, batch_size
 
 
-        # print(f"torch test_inputs size:{test_inputs.size()}")
-
-
-        return nets, nets_name, batch_size, means_input, stds_input, means_target, stds_target
-
-
-    def visualise_test(self, nets, nets_name, batch_size, means_input, stds_input, means_target, stds_target):
+    def visualise_test(self, nets, nets_name, batch_size):
 
         gen_test = iter(self.testloader)
         losses_mse = []
@@ -460,15 +372,18 @@ class process:
                 preds = test_preds.detach().cpu().numpy()[0, :, :]
 
                 print(f"input np shape: {input.shape}, target np shape: {target.shape}, preds np shape: {preds.shape}")
-                print(f"means_input: {means_input.shape}, stds_input: {stds_input.shape}")
 
                 ## select target column in input
                 input = input[:, self.idx_tgt_col]
 
+                ## Get Scaling Mean and Vol
+                input_mean, target_mean = self.mean_test_input[ind,:, self.idx_tgt_col], self.mean_test_target[ind,:]
+                input_vol, target_vol = self.vol_test_input[ind,:, self.idx_tgt_col], self.vol_test_target[ind,:]
+
                 ## Scaling back to original
-                input = input * stds_input[ind, :, self.idx_tgt_col] + means_input[ind, :, self.idx_tgt_col]
-                target = target * stds_target[ind, self.idx_tgt_col] + means_target[ind, self.idx_tgt_col]
-                preds = preds * stds_target[ind, self.idx_tgt_col] + means_target[ind, self.idx_tgt_col]
+                input = input * input_vol + input_mean
+                target = target * target_vol + target_mean
+                preds = preds * target_vol + target_mean
 
                 print(f"input shape: {input.shape}, target shape: {target.shape}, preds shape: {preds.shape}")
 
@@ -493,7 +408,7 @@ class process:
 
             # plt.show()
             plt.tight_layout()
-            plt.savefig(f"results/new_test_loader/{ind}.png")
+            plt.savefig(f"results/new_test_loader/log/{ind}.png")
             plt.close()
 
         print(' Test mse= ', np.array(losses_mse).mean(), ' dtw= ', np.array(losses_dtw).mean(), ' tdi= ',
@@ -505,12 +420,62 @@ class process:
 
 
 
+
+
 m = process()
-nets, nets_name, batch_size, means_input, stds_input, means_target, stds_target = m.main()
+nets, nets_name, batch_size = m.main()
 m.visualise_test(nets=nets, nets_name=nets_name,
-                            batch_size=batch_size, means_input=means_input,
-                            stds_input=stds_input, means_target=means_target,
-                            stds_target=stds_target)
+                            batch_size=batch_size)
+'''
+## reshaping mean and std for test set of rolling window
+test_means_ndarr = np.array(
+    [train_means_test_size[i, j:j + window] for i in range(train_means_test_size.shape[0]) for j in
+     range(train_means_test_size.shape[1] - window + 1)]
+)
+
+test_stds_ndarr = np.array(
+    [train_stds_test_size[i, j:j + window] for i in range(train_stds_test_size.shape[0]) for j in
+     range(train_stds_test_size.shape[1] - window + 1)]
+)
+'''
+
+'''
+
+## Scaling train and test for each segments
+
+seg_train_means = np.mean(train_ndarr, axis=1)
+seg_train_stds = np.std(train_ndarr, axis=1)
+
+## TODO trying only scaling with first mean and first std
+# seg_train_means = seg_train_means[0]
+# seg_train_means = seg_train_means[np.newaxis, :]
+# seg_train_stds = seg_train_stds[0]
+# seg_train_stds = seg_train_stds[np.newaxis, :]
+
+
+print(f"seg_train_means shape: {seg_train_means.shape}")
+print(f"seg_train_stds shape: {seg_train_stds.shape}")
+print(test_ndarr.shape)
+
+## Reshaping means and stds to test size
+train_means_test_size = np.broadcast_to(seg_train_means[:, np.newaxis, :], test_ndarr.shape)
+train_stds_test_size = np.broadcast_to(seg_train_stds[:, np.newaxis, :], test_ndarr.shape)
+
+
+# print(f"broadcast train scaling {np.broadcast_to(seg_train_means[:,np.newaxis,:], train_ndarr.shape).shape}")
+
+## Scaling train and test sets with train means and stds
+train_ndarr = (train_ndarr - np.broadcast_to(seg_train_means[:, np.newaxis, :], train_ndarr.shape)) / \
+              np.broadcast_to(seg_train_stds[:, np.newaxis, :], train_ndarr.shape)
+
+test_ndarr = (test_ndarr - train_means_test_size) / train_stds_test_size
+
+
+print(f"train_means_test_size: {type(train_means_test_size)}")
+'''
+
+
+
 '''
         gen_test = iter(self.testloader)
         losses_mse = []
